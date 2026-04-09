@@ -1,0 +1,5 @@
+/node_modules
+/stream
+/recordings
+/credentials.json
+/.env
