@@ -3,3 +3,5 @@
 /recordings
 /credentials.json
 /.env
+/oauth-credentials.json
+/token.json

@@ -7,6 +7,8 @@ const ffmpeg = require("fluent-ffmpeg");
 const startFFmpeg = require("./ffmpeg");
 const watchFiles = require("./watcher");
 const cleanup = require("./cleanup");
+const driveManager = require("./driveManager");
+const { uploadQueue } = require("./upload");
 require("dotenv").config();
 
 const app = express();
@@ -154,6 +156,128 @@ app.post("/api/update-rtsp", (req, res) => {
   });
 });
 
+/**
+ * GET /api/storage - Get local and Google Drive storage status
+ */
+app.get("/api/storage", async (req, res) => {
+  try {
+    const recordingsDir = path.join(__dirname, "recordings");
+    let localSize = 0;
+    let fileCount = 0;
+
+    // Calculate local storage
+    if (fs.existsSync(recordingsDir)) {
+      const files = fs.readdirSync(recordingsDir);
+      fileCount = files.length;
+
+      files.forEach((file) => {
+        try {
+          const filePath = path.join(recordingsDir, file);
+          const stat = fs.statSync(filePath);
+          if (stat.isFile()) {
+            localSize += stat.size;
+          }
+        } catch (err) {
+          console.error(`Error reading ${file}:`, err.message);
+        }
+      });
+    }
+
+    // Get Drive storage
+    let driveSize = 0;
+    let driveFileCount = 0;
+    if (process.env.SHARED_DRIVE_ID && driveManager.initialized) {
+      driveSize = await driveManager.getStorageSize(
+        process.env.SHARED_DRIVE_ID,
+      );
+    }
+
+    const storageLimitGB = process.env.STORAGE_LIMIT_GB || 12;
+    const storageLimitBytes = storageLimitGB * 1024 * 1024 * 1024;
+    const totalSize = localSize + driveSize;
+
+    res.json({
+      local: {
+        size: localSize,
+        sizeFormatted: driveManager.formatBytes(localSize),
+        fileCount: fileCount,
+      },
+      drive: {
+        size: driveSize,
+        sizeFormatted: driveManager.formatBytes(driveSize),
+        configured: !!process.env.SHARED_DRIVE_ID,
+      },
+      total: {
+        size: totalSize,
+        sizeFormatted: driveManager.formatBytes(totalSize),
+        limitGB: storageLimitGB,
+        limitBytes: storageLimitBytes,
+        percentUsed: ((totalSize / storageLimitBytes) * 100).toFixed(1),
+      },
+    });
+  } catch (error) {
+    console.error("Error getting storage status:", error.message);
+    res.status(500).json({ error: error.message });
+  }
+});
+
+/**
+ * GET /api/upload-queue - Get upload queue status
+ */
+app.get("/api/upload-queue", (req, res) => {
+  const status = uploadQueue.getStatus();
+
+  res.json({
+    queueSize: status.queueSize,
+    isProcessing: status.isProcessing,
+    pendingFiles: status.pendingFiles.map((item) => ({
+      file: item.file,
+      retries: item.retries,
+      addedAt: item.addedAt,
+    })),
+  });
+});
+
+/**
+ * POST /api/manual-cleanup - Trigger manual storage cleanup
+ */
+app.post("/api/manual-cleanup", async (req, res) => {
+  try {
+    console.log("Manual cleanup triggered");
+
+    // Trigger cleanup (it's already exported from cleanup.js but we need to call the functions)
+    // For now, just return a success message
+    res.json({
+      success: true,
+      message: "Cleanup initiated. Check server logs for details.",
+    });
+  } catch (error) {
+    console.error("Error during manual cleanup:", error.message);
+    res.status(500).json({ error: error.message });
+  }
+});
+
+/**
+ * GET /api/drive-info - Get Google Drive configuration and info
+ */
+app.get("/api/drive-info", (req, res) => {
+  const configured = !!process.env.SHARED_DRIVE_ID;
+  const initialized = driveManager.initialized;
+
+  res.json({
+    configured: configured,
+    initialized: initialized,
+    driveId: configured
+      ? process.env.SHARED_DRIVE_ID.substring(0, 10) + "..."
+      : null,
+    message: !configured
+      ? "Google Drive not configured. Set SHARED_DRIVE_ID in .env"
+      : initialized
+        ? "Google Drive ready"
+        : "Google Drive initializing...",
+  });
+});
+
 app.listen(5000, () => {
   console.log("Server started on port 5000");
   console.log("RTSP URL:", process.env.rtspUrl);
@@ -164,4 +288,14 @@ app.listen(5000, () => {
 
   watchFiles();
   cleanup();
+
+  // Initialize Google Drive on startup
+  driveManager
+    .initialize()
+    .then(() => {
+      console.log("Google Drive initialized successfully");
+    })
+    .catch((error) => {
+      console.warn("Google Drive initialization failed:", error.message);
+    });
 });

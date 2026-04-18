@@ -28,24 +28,24 @@ const startFFmpeg = () => {
     ])
     .output(path.join(__dirname, "stream/index.m3u8"))
     .on("start", (cmdline) => {
-      console.log("HLS Stream started");
-      console.log("Command:", cmdline);
+      // console.log("HLS Stream started");
+      // console.log("Command:", cmdline);
       hls = hlsCommand;
     })
     .on("stderr", (stderrLine) => {
-      console.log("[HLS]", stderrLine);
+      // console.log("[HLS]", stderrLine);
     })
     .on("error", (err) => {
       console.error("HLS Stream error:", err.message);
       console.error("Make sure RTSP password is correct!");
       // Restart after error
       setTimeout(() => {
-        console.log("Restarting HLS stream...");
+        // console.log("Restarting HLS stream...");
         startFFmpeg();
       }, 5000);
     })
     .on("end", () => {
-      console.log("HLS Stream ended");
+      // console.log("HLS Stream ended");
     })
     .run();
 
@@ -56,31 +56,32 @@ const startFFmpeg = () => {
     ])
     .outputOptions([
       "-c:v copy", // keeps original 1080p
-      "-c:a aac", // Audio codec
+      "-c:a copy", // Copy audio as-is from RTSP
       "-f segment",
-      "-segment_time 60",
+      "-segment_time 300", // 5-minute segments (300 seconds)
       "-reset_timestamps 1",
+      "-strftime 1", // Enable timestamp formatting in filename
     ])
-    .output(path.join(__dirname, "recordings/video_%03d.mp4"))
+    .output(path.join(__dirname, "recordings/video_%Y-%m-%d_%H-%M-%S_%p.mp4"))
     .on("start", (cmdline) => {
-      console.log("Recording started");
-      console.log("Command:", cmdline);
+      // console.log("Recording started");
+      // console.log("Command:", cmdline);
       recording = recordCommand;
     })
     .on("stderr", (stderrLine) => {
-      console.log("[RECORDING]", stderrLine);
+      // console.log("[RECORDING]", stderrLine);
     })
     .on("error", (err) => {
       console.error("Recording error:", err.message);
       console.error("Make sure RTSP password is correct!");
       // Restart after error
       setTimeout(() => {
-        console.log("Restarting recording...");
+        // console.log("Restarting recording...");
         startFFmpeg();
       }, 5000);
     })
     .on("end", () => {
-      console.log("Recording ended");
+      // console.log("Recording ended");
     })
     .run();
 
