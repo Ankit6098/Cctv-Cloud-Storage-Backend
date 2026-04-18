@@ -56,13 +56,12 @@ const startFFmpeg = () => {
     ])
     .outputOptions([
       "-c:v copy", // keeps original 1080p
-      "-c:a copy", // Copy audio as-is from RTSP
+      "-c:a aac", // Audio codec
       "-f segment",
       "-segment_time 300", // 5-minute segments (300 seconds)
       "-reset_timestamps 1",
-      "-strftime 1", // Enable timestamp formatting in filename
     ])
-    .output(path.join(__dirname, "recordings/video_%Y-%m-%d_%H-%M-%S_%p.mp4"))
+    .output(path.join(__dirname, "recordings/video_%03d.mp4"))
     .on("start", (cmdline) => {
       // console.log("Recording started");
       // console.log("Command:", cmdline);
