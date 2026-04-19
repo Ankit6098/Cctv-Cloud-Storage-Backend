@@ -278,6 +278,69 @@ app.get("/api/drive-info", (req, res) => {
   });
 });
 
+/**
+ * GET /api/old-recording - Get the oldest recording file (at least 5 minutes old)
+ */
+app.get("/api/old-recording", (req, res) => {
+  try {
+    const recordingsDir = path.join(__dirname, "recordings");
+
+    if (!fs.existsSync(recordingsDir)) {
+      return res.status(404).json({ error: "Recordings directory not found" });
+    }
+
+    const files = fs
+      .readdirSync(recordingsDir)
+      .filter((f) => f.endsWith(".mp4"));
+
+    if (files.length === 0) {
+      return res.status(404).json({ error: "No recording files found" });
+    }
+
+    // Get file stats and find oldest file that's at least 5 minutes old
+    const now = Date.now();
+    const fiveMinutesAgo = now - 5 * 60 * 1000;
+
+    let oldestFile = null;
+    let oldestTime = Infinity;
+
+    files.forEach((file) => {
+      try {
+        const filePath = path.join(recordingsDir, file);
+        const stat = fs.statSync(filePath);
+        const createdTime = stat.birthtime.getTime() || stat.mtime.getTime();
+
+        // Find oldest file that's at least 5 minutes old
+        if (createdTime < fiveMinutesAgo && createdTime < oldestTime) {
+          oldestFile = file;
+          oldestTime = createdTime;
+        }
+      } catch (err) {
+        console.error(`Error reading ${file}:`, err.message);
+      }
+    });
+
+    if (!oldestFile) {
+      return res.status(404).json({
+        error:
+          "No recordings older than 5 minutes. Please try again in a few moments.",
+      });
+    }
+
+    const url = `http://localhost:5000/recordings/${oldestFile}`;
+    console.log(`Serving old recording: ${oldestFile}`);
+
+    res.json({
+      url: url,
+      file: oldestFile,
+      createdAt: new Date(oldestTime).toISOString(),
+    });
+  } catch (error) {
+    console.error("Error getting old recording:", error.message);
+    res.status(500).json({ error: error.message });
+  }
+});
+
 app.listen(5000, () => {
   console.log("Server started on port 5000");
   console.log("RTSP URL:", process.env.rtspUrl);

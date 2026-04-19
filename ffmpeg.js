@@ -12,24 +12,26 @@ const startFFmpeg = () => {
 
   let hls, recording;
 
-  // HLS STREAM (for frontend) - Use copy codec for faster streaming
+  // HLS STREAM (for frontend) - Low-latency optimized settings
   const hlsCommand = ffmpeg(RTSP_URL)
     .inputOptions([
       "-rtsp_transport tcp", // TCP is more stable than UDP
+      "-buffer_size 32768", // Smaller buffer for lower latency
+      "-max_delay 500000", // 500ms max delay
     ])
     .outputOptions([
       "-c:v copy", // Copy video codec (no transcoding)
       "-c:a aac", // Audio codec
       "-f hls",
-      "-hls_time 2",
-      "-hls_list_size 5",
-      "-hls_flags delete_segments",
+      "-hls_time 1", // 1 second segments for lower latency
+      "-hls_list_size 3", // Keep only 3 segments (3 seconds of video)
+      "-hls_flags delete_segments+independent_segments",
       "-start_number 0",
+      "-preset ultrafast", // Fastest encoding
     ])
     .output(path.join(__dirname, "stream/index.m3u8"))
     .on("start", (cmdline) => {
-      // console.log("HLS Stream started");
-      // console.log("Command:", cmdline);
+      console.log("HLS Stream started - optimized for low latency");
       hls = hlsCommand;
     })
     .on("stderr", (stderrLine) => {
@@ -40,16 +42,16 @@ const startFFmpeg = () => {
       console.error("Make sure RTSP password is correct!");
       // Restart after error
       setTimeout(() => {
-        // console.log("Restarting HLS stream...");
+        console.log("Restarting HLS stream...");
         startFFmpeg();
       }, 5000);
     })
     .on("end", () => {
-      // console.log("HLS Stream ended");
+      console.log("HLS Stream ended");
     })
     .run();
 
-  // RECORDING (1080p segments)
+  // RECORDING (1080p segments) - Original settings
   const recordCommand = ffmpeg(RTSP_URL)
     .inputOptions([
       "-rtsp_transport tcp", // TCP is more stable
@@ -63,9 +65,7 @@ const startFFmpeg = () => {
     ])
     .output(path.join(__dirname, "recordings/video_%03d.mp4"))
     .on("start", (cmdline) => {
-      // console.log("Recording started");
-      // console.log("Command:", cmdline);
-      recording = recordCommand;
+      console.log("Recording started");
     })
     .on("stderr", (stderrLine) => {
       // console.log("[RECORDING]", stderrLine);
@@ -75,12 +75,12 @@ const startFFmpeg = () => {
       console.error("Make sure RTSP password is correct!");
       // Restart after error
       setTimeout(() => {
-        // console.log("Restarting recording...");
+        console.log("Restarting recording...");
         startFFmpeg();
       }, 5000);
     })
     .on("end", () => {
-      // console.log("Recording ended");
+      console.log("Recording ended");
     })
     .run();
 
