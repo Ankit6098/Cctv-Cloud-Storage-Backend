@@ -2,6 +2,51 @@ const driveManager = require("./driveManager");
 const fs = require("fs");
 const path = require("path");
 
+/**
+ * Rename file with date and time format: YYYY-MM-DD_HH-MM-SS_AM/PM.mp4
+ * Subtracts 5 minutes from mtime to get actual footage START time
+ */
+const renameFileWithTimestamp = async (filePath) => {
+  try {
+    const dir = path.dirname(filePath);
+    const fileName = path.basename(filePath);
+    const ext = path.extname(fileName);
+
+    // Get file's modification time (when writing finished)
+    const fileStats = fs.statSync(filePath);
+    let fileDate = new Date(fileStats.mtime);
+
+    // Subtract 5 minutes to get actual footage start time (accounting for hour/day boundaries)
+    fileDate.setMinutes(fileDate.getMinutes() - 5);
+
+    // Format: YYYY-MM-DD_HH-MM-SS_AM/PM
+    const year = fileDate.getFullYear();
+    const month = String(fileDate.getMonth() + 1).padStart(2, "0");
+    const day = String(fileDate.getDate()).padStart(2, "0");
+
+    const hoursIn24 = fileDate.getHours();
+    const ampm = hoursIn24 >= 12 ? "PM" : "AM";
+    const hoursIn12 = hoursIn24 % 12 || 12; // Convert to 12-hour format
+    const hours = String(hoursIn12).padStart(2, "0");
+    const minutes = String(fileDate.getMinutes()).padStart(2, "0");
+    const seconds = String(fileDate.getSeconds()).padStart(2, "0");
+
+    const newFileName = `${year}-${month}-${day}_${hours}-${minutes}-${seconds}_${ampm}${ext}`;
+    const newFilePath = path.join(dir, newFileName);
+
+    // Rename the file
+    fs.renameSync(filePath, newFilePath);
+    console.log(
+      `✏️  Renamed: ${fileName} → ${newFileName} (Start time: 5 min earlier)`,
+    );
+
+    return newFilePath;
+  } catch (error) {
+    console.error(`Error renaming file ${filePath}:`, error.message);
+    return null;
+  }
+};
+
 // Upload queue for sequential processing
 class UploadQueue {
   constructor() {
@@ -12,18 +57,46 @@ class UploadQueue {
 
   /**
    * Add file to upload queue
+   * File is considered ready because watcher.js waits 60 seconds for write stabilization
+   * Prevents duplicate uploads of the same file
    */
   addToQueue(filePath) {
-    this.queue.push({
-      filePath,
-      retries: 0,
-      addedAt: new Date(),
-    });
+    try {
+      // Verify file still exists before queueing
+      if (!fs.existsSync(filePath)) {
+        console.warn(`⚠️  File not found: ${filePath}`);
+        return;
+      }
 
-    console.log(
-      `📋 Added to queue: ${path.basename(filePath)} (Queue size: ${this.queue.length})`,
-    );
-    this.processQueue();
+      // Check if file is already in queue (prevent duplicates)
+      const fileName = path.basename(filePath);
+      const isDuplicate = this.queue.some(
+        (item) => path.basename(item.filePath) === fileName,
+      );
+
+      if (isDuplicate) {
+        console.warn(
+          `⚠️  Duplicate detected: ${fileName} already in queue - skipping`,
+        );
+        return;
+      }
+
+      const stats = fs.statSync(filePath);
+      const fileSizeInMB = stats.size / (1024 * 1024);
+
+      this.queue.push({
+        filePath,
+        retries: 0,
+        addedAt: new Date(),
+      });
+
+      console.log(
+        `📋 Added to queue: ${fileName} (${fileSizeInMB.toFixed(2)}MB) - (Queue size: ${this.queue.length})`,
+      );
+      this.processQueue();
+    } catch (error) {
+      console.error(`Error adding to queue: ${error.message}`);
+    }
   }
 
   /**
@@ -49,22 +122,19 @@ class UploadQueue {
           continue;
         }
 
-        // Validate file size (5-minute video should be 12-18MB, reject if < 10MB)
-        const fileStats = fs.statSync(item.filePath);
-        const fileSizeInMB = fileStats.size / (1024 * 1024);
-        const MIN_FILE_SIZE = 10; // 10MB minimum for 5-minute segment
-        if (fileSizeInMB < MIN_FILE_SIZE) {
-          console.warn(
-            `⚠️  File incomplete (${fileSizeInMB.toFixed(2)}MB, need ${MIN_FILE_SIZE}MB+), retrying: ${item.filePath}`,
-          );
+        // Rename file with timestamp (YYYY-MM-DD_HH-MM-SS.mp4)
+        const renamedPath = await renameFileWithTimestamp(item.filePath);
+
+        if (!renamedPath) {
+          console.error(`Failed to rename file: ${item.filePath}`);
           item.retries++;
           if (item.retries >= this.retryLimit) {
             console.error(
-              `❌ File still incomplete after ${this.retryLimit} retries (${fileSizeInMB.toFixed(2)}MB), removing: ${item.filePath}`,
+              `❌ Failed after ${this.retryLimit} retries: ${item.filePath}`,
             );
             this.queue.shift();
           }
-          break; // Stop processing, retry later
+          break;
         }
 
         // Get current date folder path
@@ -76,15 +146,15 @@ class UploadQueue {
 
           if (item.retries >= this.retryLimit) {
             console.error(
-              `❌ Failed after ${this.retryLimit} retries: ${item.filePath}`,
+              `❌ Failed after ${this.retryLimit} retries: ${renamedPath}`,
             );
             this.queue.shift();
           }
           break; // Stop processing, retry later
         }
 
-        // Upload file
-        await driveManager.uploadFile(item.filePath, parentFolderId);
+        // Upload renamed file
+        await driveManager.uploadFile(renamedPath, parentFolderId);
 
         // Remove from queue after successful upload
         this.queue.shift();

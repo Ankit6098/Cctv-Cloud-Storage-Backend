@@ -7,7 +7,7 @@ const watchFiles = () => {
       ignored: /(^|[\/\\])\.|\.DS_Store/,
       persistent: true,
       awaitWriteFinish: {
-        stabilityThreshold: 25000, // Wait 25 seconds - 5min segment takes time to finalize
+        stabilityThreshold: 60000, // Wait 60 seconds - ensure 5min FFmpeg segment is fully written
         pollInterval: 100,
       },
     })

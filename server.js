@@ -341,6 +341,113 @@ app.get("/api/old-recording", (req, res) => {
   }
 });
 
+/**
+ * GET /api/archive - List all archived files from Google Drive with optional date filtering
+ * Query params: startDate (YYYY-MM-DD), endDate (YYYY-MM-DD)
+ */
+app.get("/api/archive", async (req, res) => {
+  try {
+    const { startDate, endDate } = req.query;
+
+    if (!driveManager.initialized) {
+      return res.status(503).json({
+        error: "Google Drive not initialized",
+      });
+    }
+
+    const archives = await driveManager.listArchivesByDate(startDate, endDate);
+
+    res.json({
+      success: true,
+      count: archives.length,
+      archives: archives,
+    });
+  } catch (error) {
+    console.error("Error listing archives:", error.message);
+    res.status(500).json({ error: error.message });
+  }
+});
+
+/**
+ * GET /api/archive/:fileId - Get archive file details
+ */
+app.get("/api/archive/:fileId", async (req, res) => {
+  try {
+    const { fileId } = req.params;
+
+    if (!driveManager.initialized) {
+      return res.status(503).json({
+        error: "Google Drive not initialized",
+      });
+    }
+
+    const fileInfo = await driveManager.getFileById(fileId);
+
+    if (!fileInfo) {
+      return res.status(404).json({ error: "File not found" });
+    }
+
+    res.json({
+      success: true,
+      file: fileInfo,
+    });
+  } catch (error) {
+    console.error("Error getting archive file:", error.message);
+    res.status(500).json({ error: error.message });
+  }
+});
+
+/**
+ * GET /api/stream-archive/:fileId - Stream archive file from Google Drive
+ */
+app.get("/api/stream-archive/:fileId", async (req, res) => {
+  try {
+    const { fileId } = req.params;
+
+    if (!driveManager.initialized) {
+      return res.status(503).json({
+        error: "Google Drive not initialized",
+      });
+    }
+
+    // Get file info first to set proper headers
+    const fileInfo = await driveManager.getFileById(fileId);
+
+    if (!fileInfo) {
+      return res.status(404).json({ error: "File not found" });
+    }
+
+    // Set response headers for video streaming
+    res.setHeader("Content-Type", "video/mp4");
+    res.setHeader("Content-Length", fileInfo.size || "unknown");
+    res.setHeader("Accept-Ranges", "bytes");
+    res.setHeader("Content-Disposition", `inline; filename="${fileInfo.name}"`);
+
+    // Get and stream the file
+    const stream = await driveManager.getFileStream(fileId);
+
+    if (!stream) {
+      return res.status(500).json({
+        error: "Failed to get file stream",
+      });
+    }
+
+    stream.on("error", (error) => {
+      console.error("Stream error:", error.message);
+      if (!res.headersSent) {
+        res.status(500).json({ error: "Stream error" });
+      }
+    });
+
+    stream.pipe(res);
+  } catch (error) {
+    console.error("Error streaming archive:", error.message);
+    if (!res.headersSent) {
+      res.status(500).json({ error: error.message });
+    }
+  }
+});
+
 app.listen(5000, () => {
   console.log("Server started on port 5000");
   console.log("RTSP URL:", process.env.rtspUrl);
