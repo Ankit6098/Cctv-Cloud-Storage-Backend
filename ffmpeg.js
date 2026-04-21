@@ -51,7 +51,7 @@ const startFFmpeg = () => {
     })
     .run();
 
-  // RECORDING (1080p segments) - Original settings
+  // RECORDING (1080p segments) - Auto-timestamped with strftime
   const recordCommand = ffmpeg(RTSP_URL)
     .inputOptions([
       "-rtsp_transport tcp", // TCP is more stable
@@ -62,8 +62,9 @@ const startFFmpeg = () => {
       "-f segment",
       "-segment_time 300", // 5-minute segments (300 seconds)
       "-reset_timestamps 1",
+      "-strftime 1", // Enable timestamp in filename
     ])
-    .output(path.join(__dirname, "recordings/video_%03d.mp4"))
+    .output(path.join(__dirname, "recordings/video_%Y-%m-%d_%I-%M-%S_%p.mp4"))
     .on("start", (cmdline) => {
       console.log("Recording started");
     })

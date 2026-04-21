@@ -2,51 +2,6 @@ const driveManager = require("./driveManager");
 const fs = require("fs");
 const path = require("path");
 
-/**
- * Rename file with date and time format: YYYY-MM-DD_HH-MM-SS_AM/PM.mp4
- * Subtracts 5 minutes from mtime to get actual footage START time
- */
-const renameFileWithTimestamp = async (filePath) => {
-  try {
-    const dir = path.dirname(filePath);
-    const fileName = path.basename(filePath);
-    const ext = path.extname(fileName);
-
-    // Get file's modification time (when writing finished)
-    const fileStats = fs.statSync(filePath);
-    let fileDate = new Date(fileStats.mtime);
-
-    // Subtract 5 minutes to get actual footage start time (accounting for hour/day boundaries)
-    fileDate.setMinutes(fileDate.getMinutes() - 5);
-
-    // Format: YYYY-MM-DD_HH-MM-SS_AM/PM
-    const year = fileDate.getFullYear();
-    const month = String(fileDate.getMonth() + 1).padStart(2, "0");
-    const day = String(fileDate.getDate()).padStart(2, "0");
-
-    const hoursIn24 = fileDate.getHours();
-    const ampm = hoursIn24 >= 12 ? "PM" : "AM";
-    const hoursIn12 = hoursIn24 % 12 || 12; // Convert to 12-hour format
-    const hours = String(hoursIn12).padStart(2, "0");
-    const minutes = String(fileDate.getMinutes()).padStart(2, "0");
-    const seconds = String(fileDate.getSeconds()).padStart(2, "0");
-
-    const newFileName = `${year}-${month}-${day}_${hours}-${minutes}-${seconds}_${ampm}${ext}`;
-    const newFilePath = path.join(dir, newFileName);
-
-    // Rename the file
-    fs.renameSync(filePath, newFilePath);
-    console.log(
-      `✏️  Renamed: ${fileName} → ${newFileName} (Start time: 5 min earlier)`,
-    );
-
-    return newFilePath;
-  } catch (error) {
-    console.error(`Error renaming file ${filePath}:`, error.message);
-    return null;
-  }
-};
-
 // Upload queue for sequential processing
 class UploadQueue {
   constructor() {
@@ -58,6 +13,7 @@ class UploadQueue {
   /**
    * Add file to upload queue
    * File is considered ready because watcher.js waits 60 seconds for write stabilization
+   * FFmpeg auto-timestamps files with -strftime, so no rename needed
    * Prevents duplicate uploads of the same file
    */
   addToQueue(filePath) {
@@ -101,6 +57,7 @@ class UploadQueue {
 
   /**
    * Process upload queue sequentially
+   * Files are already timestamped by FFmpeg's -strftime, so skip rename step
    */
   async processQueue() {
     if (this.isProcessing || this.queue.length === 0) {
@@ -122,21 +79,6 @@ class UploadQueue {
           continue;
         }
 
-        // Rename file with timestamp (YYYY-MM-DD_HH-MM-SS.mp4)
-        const renamedPath = await renameFileWithTimestamp(item.filePath);
-
-        if (!renamedPath) {
-          console.error(`Failed to rename file: ${item.filePath}`);
-          item.retries++;
-          if (item.retries >= this.retryLimit) {
-            console.error(
-              `❌ Failed after ${this.retryLimit} retries: ${item.filePath}`,
-            );
-            this.queue.shift();
-          }
-          break;
-        }
-
         // Get current date folder path
         const parentFolderId = await driveManager.getFolderPath();
 
@@ -146,15 +88,17 @@ class UploadQueue {
 
           if (item.retries >= this.retryLimit) {
             console.error(
-              `❌ Failed after ${this.retryLimit} retries: ${renamedPath}`,
+              `❌ Failed after ${this.retryLimit} retries: ${item.filePath}`,
             );
             this.queue.shift();
           }
           break; // Stop processing, retry later
         }
 
-        // Upload renamed file
-        await driveManager.uploadFile(renamedPath, parentFolderId);
+        // Upload file directly (already timestamped by FFmpeg)
+        const fileName = path.basename(item.filePath);
+        console.log(`📤 Uploading: ${fileName}`);
+        await driveManager.uploadFile(item.filePath, parentFolderId);
 
         // Remove from queue after successful upload
         this.queue.shift();

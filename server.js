@@ -60,18 +60,40 @@ app.get("/", (req, res) => {
 // Debug endpoint to check connection status
 app.get("/api/status", (req, res) => {
   const rtspUrl = process.env.rtspUrl || "NOT_CONFIGURED";
-
-  // Check file sizes
-  const recordingFile = path.join(__dirname, "recordings/video_000.mp4");
+  const recordingsDir = path.join(__dirname, "recordings");
   const m3u8File = path.join(__dirname, "stream/index.m3u8");
 
   let recordingSize = 0;
+  let latestRecordingFile = null;
   let m3u8Exists = false;
 
   try {
-    if (fs.existsSync(recordingFile)) {
-      recordingSize = fs.statSync(recordingFile).size;
+    // Check for latest recording file (FFmpeg auto-timestamps with -strftime)
+    if (fs.existsSync(recordingsDir)) {
+      const files = fs.readdirSync(recordingsDir);
+      const mp4Files = files.filter((file) => file.endsWith(".mp4"));
+
+      if (mp4Files.length > 0) {
+        // Get the most recently modified file
+        let newestFile = mp4Files[0];
+        let newestTime = fs.statSync(
+          path.join(recordingsDir, newestFile),
+        ).mtime;
+
+        for (const file of mp4Files) {
+          const filePath = path.join(recordingsDir, file);
+          const fileTime = fs.statSync(filePath).mtime;
+          if (fileTime > newestTime) {
+            newestTime = fileTime;
+            newestFile = file;
+          }
+        }
+
+        latestRecordingFile = newestFile;
+        recordingSize = fs.statSync(path.join(recordingsDir, newestFile)).size;
+      }
     }
+
     m3u8Exists = fs.existsSync(m3u8File);
   } catch (err) {
     console.error("Error checking files:", err);
@@ -80,6 +102,7 @@ app.get("/api/status", (req, res) => {
   res.json({
     status: "running",
     rtspUrl: rtspUrl,
+    latestRecordingFile: latestRecordingFile,
     recordingSize: recordingSize,
     m3u8Exists: m3u8Exists,
     streamUrl: "http://localhost:5000/stream/index.m3u8",
