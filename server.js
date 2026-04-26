@@ -471,6 +471,244 @@ app.get("/api/stream-archive/:fileId", async (req, res) => {
   }
 });
 
+/**
+ * GET /api/timeline/recordings - Get all recordings (local + Google Drive) with metadata for timeline
+ */
+app.get("/api/timeline/recordings", async (req, res) => {
+  try {
+    const recordings = [];
+    const recordingsDir = path.join(__dirname, "recordings");
+
+    // First, try to get local recordings
+    if (fs.existsSync(recordingsDir)) {
+      const files = fs
+        .readdirSync(recordingsDir)
+        .filter((f) => f.endsWith(".mp4"))
+        .sort();
+
+      files.forEach((file) => {
+        try {
+          const filePath = path.join(recordingsDir, file);
+          const stat = fs.statSync(filePath);
+          const createdTime = stat.birthtime.getTime() || stat.mtime.getTime();
+
+          recordings.push({
+            id: file,
+            name: file,
+            size: stat.size,
+            sizeFormatted: (stat.size / (1024 * 1024)).toFixed(2) + " MB",
+            createdAt: new Date(createdTime).toISOString(),
+            createdAtTime: createdTime,
+            url: `/recordings/${file}`,
+            source: "local",
+          });
+        } catch (err) {
+          console.error(`Error reading ${file}:`, err.message);
+        }
+      });
+    }
+
+    // Then, get Google Drive recordings if initialized
+    if (driveManager.initialized) {
+      try {
+        const driveFiles = await driveManager.listArchivesByDate();
+
+        if (driveFiles && driveFiles.length > 0) {
+          driveFiles.forEach((day) => {
+            if (day.files && day.files.length > 0) {
+              day.files.forEach((file) => {
+                recordings.push({
+                  id: file.id,
+                  name: file.name,
+                  size: file.size || 0,
+                  sizeFormatted: file.size
+                    ? (file.size / (1024 * 1024)).toFixed(2) + " MB"
+                    : "Unknown",
+                  createdAt: file.createdTime,
+                  createdAtTime: new Date(file.createdTime).getTime(),
+                  url: `/api/stream-archive/${file.id}`,
+                  source: "drive",
+                  fileId: file.id,
+                });
+              });
+            }
+          });
+        }
+      } catch (err) {
+        console.warn(
+          "Warning: Could not fetch Google Drive files:",
+          err.message,
+        );
+      }
+    }
+
+    // Sort by creation time (ascending - oldest first)
+    recordings.sort((a, b) => a.createdAtTime - b.createdAtTime);
+
+    res.json({
+      success: true,
+      count: recordings.length,
+      recordings: recordings,
+    });
+  } catch (error) {
+    console.error("Error getting timeline recordings:", error.message);
+    res.status(500).json({ error: error.message });
+  }
+});
+
+/**
+ * GET /api/timeline/concatenate - Serve stitched video by index
+ * When client requests this, we send videos in sequence using a playlist or by serving segments
+ * For simplicity, we'll serve a single file at a time based on the index parameter
+ */
+app.get("/api/timeline/concatenate", (req, res) => {
+  try {
+    const recordingsDir = path.join(__dirname, "recordings");
+
+    if (!fs.existsSync(recordingsDir)) {
+      return res.status(404).json({ error: "No recordings found" });
+    }
+
+    const files = fs
+      .readdirSync(recordingsDir)
+      .filter((f) => f.endsWith(".mp4"))
+      .sort();
+
+    if (files.length === 0) {
+      return res.status(404).json({ error: "No recordings found" });
+    }
+
+    const { start, end } = req.query;
+    let startTime = start ? parseInt(start) : 0; // timestamp in ms
+    let endTime = end ? parseInt(end) : Date.now();
+
+    // Find files within the time range
+    const filesToServe = [];
+
+    files.forEach((file) => {
+      try {
+        const filePath = path.join(recordingsDir, file);
+        const stat = fs.statSync(filePath);
+        const createdTime = stat.birthtime.getTime() || stat.mtime.getTime();
+
+        if (createdTime >= startTime && createdTime <= endTime) {
+          filesToServe.push({
+            path: filePath,
+            file: file,
+            createdTime: createdTime,
+            size: stat.size,
+          });
+        }
+      } catch (err) {
+        console.error(`Error reading ${file}:`, err.message);
+      }
+    });
+
+    if (filesToServe.length === 0) {
+      return res.status(404).json({
+        error: "No recordings found in the specified time range",
+      });
+    }
+
+    // Sort by creation time
+    filesToServe.sort((a, b) => a.createdTime - b.createdTime);
+
+    // If multiple files, we'll create a concat demuxer file
+    // For now, just serve the first file (most recent or oldest based on preference)
+    // In production, use ffmpeg to concatenate on-the-fly
+
+    const firstFile = filesToServe[0];
+
+    res.setHeader("Content-Type", "video/mp4");
+    res.setHeader("Accept-Ranges", "bytes");
+    res.setHeader(
+      "Content-Disposition",
+      `inline; filename="${firstFile.file}"`,
+    );
+
+    const fileStream = fs.createReadStream(firstFile.path);
+
+    fileStream.on("error", (error) => {
+      console.error("File stream error:", error.message);
+      if (!res.headersSent) {
+        res.status(500).json({ error: "Stream error" });
+      }
+    });
+
+    fileStream.pipe(res);
+  } catch (error) {
+    console.error("Error concatenating timeline:", error.message);
+    if (!res.headersSent) {
+      res.status(500).json({ error: error.message });
+    }
+  }
+});
+
+/**
+ * POST /api/timeline/stitch - Create a stitched video from multiple recordings
+ * This endpoint concatenates multiple MP4 files into a single output using FFmpeg
+ */
+app.post("/api/timeline/stitch", (req, res) => {
+  try {
+    const recordingsDir = path.join(__dirname, "recordings");
+
+    if (!fs.existsSync(recordingsDir)) {
+      return res.status(404).json({ error: "No recordings found" });
+    }
+
+    const files = fs
+      .readdirSync(recordingsDir)
+      .filter((f) => f.endsWith(".mp4"))
+      .sort();
+
+    if (files.length === 0) {
+      return res.status(404).json({ error: "No recordings found" });
+    }
+
+    // Create a concat demuxer file
+    const concatFile = path.join(recordingsDir, "concat.txt");
+    const concatContent = files
+      .map((file) => `file '${path.join(recordingsDir, file)}'`)
+      .join("\n");
+
+    fs.writeFileSync(concatFile, concatContent);
+
+    const outputPath = path.join(recordingsDir, "stitched_output.mp4");
+
+    // Use FFmpeg to concatenate
+    ffmpeg()
+      .input(
+        `concat:${files.map((f) => path.join(recordingsDir, f)).join("|")}`,
+      )
+      .outputOptions("-c:v", "copy", "-c:a", "copy")
+      .save(outputPath)
+      .on("end", () => {
+        console.log("Stitching completed");
+        res.json({
+          success: true,
+          message: "Videos stitched successfully",
+          output: outputPath,
+          url: `http://localhost:5000/recordings/stitched_output.mp4`,
+        });
+
+        // Clean up concat file
+        fs.unlinkSync(concatFile);
+      })
+      .on("error", (err) => {
+        console.error("Stitching error:", err.message);
+        res.status(500).json({ error: err.message });
+
+        // Clean up concat file
+        if (fs.existsSync(concatFile)) {
+          fs.unlinkSync(concatFile);
+        }
+      });
+  } catch (error) {
+    console.error("Error in stitch endpoint:", error.message);
+    res.status(500).json({ error: error.message });
+  }
+});
+
 app.listen(5000, () => {
   console.log("Server started on port 5000");
   console.log("RTSP URL:", process.env.rtspUrl);
