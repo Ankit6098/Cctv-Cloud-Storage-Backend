@@ -100,6 +100,19 @@ class UploadQueue {
         console.log(`📤 Uploading: ${fileName}`);
         await driveManager.uploadFile(item.filePath, parentFolderId);
 
+        // Delete local file after successful upload to Drive
+        try {
+          const fileSize = fs.statSync(item.filePath).size;
+          fs.unlinkSync(item.filePath);
+          console.log(
+            `🗑️  Deleted local file: ${fileName} (${driveManager.formatBytes(fileSize)})`,
+          );
+        } catch (deleteError) {
+          console.warn(
+            `⚠️  Failed to delete local file ${fileName}: ${deleteError.message}`,
+          );
+        }
+
         // Remove from queue after successful upload
         this.queue.shift();
         console.log(`✅ Upload completed. Queue size: ${this.queue.length}`);
