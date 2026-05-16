@@ -139,6 +139,24 @@ After authentication:
 
 ---
 
+### **Alternative: Manual Terminal Authentication** 🖥️
+
+If you are running the backend on a headless server without a graphical interface, or if you prefer not to have the browser automatically open, you can authenticate manually using the terminal:
+
+1. Stop the backend server if it is running.
+2. Run the manual token generation script:
+   ```bash
+   node generate-token.js
+   ```
+3. The script will print a Google authentication URL to your terminal.
+4. Copy the URL and paste it into any web browser (even on a different device).
+5. Log in and grant permissions to the application.
+6. The browser will redirect and display a success message.
+7. Return to your terminal, and you will see `✓ Token successfully generated and saved to token.json!`
+8. You can now start the backend normally with `npm start`.
+
+---
+
 ### **STEP 6: Future Runs** ✅
 
 Next time you start the backend:

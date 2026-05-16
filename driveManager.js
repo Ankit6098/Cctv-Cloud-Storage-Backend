@@ -14,19 +14,28 @@ class DriveManager {
   }
 
   async initialize() {
-    try {
-      const auth = await this.loadAuth();
-      this.drive = google.drive({
-        version: "v3",
-        auth: auth,
-      });
-      this.initialized = true;
-      console.log("✓ Google Drive initialized with OAuth 2.0");
-      return true;
-    } catch (error) {
-      console.error("✗ Failed to initialize Google Drive:", error.message);
-      return false;
+    if (this.initPromise) {
+      return this.initPromise;
     }
+
+    this.initPromise = (async () => {
+      try {
+        const auth = await this.loadAuth();
+        this.drive = google.drive({
+          version: "v3",
+          auth: auth,
+        });
+        this.initialized = true;
+        console.log("✓ Google Drive initialized with OAuth 2.0");
+        return true;
+      } catch (error) {
+        console.error("✗ Failed to initialize Google Drive:", error.message);
+        this.initPromise = null; // allow retry
+        return false;
+      }
+    })();
+
+    return this.initPromise;
   }
 
   /**

@@ -444,7 +444,8 @@ app.get("/api/stream-archive/:fileId", async (req, res) => {
     res.setHeader("Content-Type", "video/mp4");
     res.setHeader("Content-Length", fileInfo.size || "unknown");
     res.setHeader("Accept-Ranges", "bytes");
-    res.setHeader("Content-Disposition", `inline; filename="${fileInfo.name}"`);
+    const disposition = req.query.download === 'true' ? 'attachment' : 'inline';
+    res.setHeader("Content-Disposition", `${disposition}; filename="${fileInfo.name}"`);
 
     // Get and stream the file
     const stream = await driveManager.getFileStream(fileId);
@@ -642,6 +643,20 @@ app.get("/api/timeline/concatenate", (req, res) => {
       res.status(500).json({ error: error.message });
     }
   }
+});
+
+/**
+ * GET /api/download-local/:filename - Download a local recording file
+ */
+app.get("/api/download-local/:filename", (req, res) => {
+  const { filename } = req.params;
+  const filePath = path.join(__dirname, "recordings", filename);
+  
+  if (!fs.existsSync(filePath)) {
+    return res.status(404).json({ error: "File not found" });
+  }
+  
+  res.download(filePath);
 });
 
 /**
